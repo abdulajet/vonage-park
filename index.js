@@ -74,9 +74,7 @@ router.post('/onDtmf', async (req, res, next) => {
                 if (digit === '*') {
                     const hours = await state.get("hours");
                     const parkingID = await state.get("dtmfDigits");
-                    const conversationData = await state.get("conversationData");
-        
-                    const conversation = voice.getConversation(conversationData.id, conversationData.name);
+                    
                     await chargeCard();
                     await conversation.sayText({text: `Your card has been charged for ${hours} hours. 
                     You will receive a text confirmation and a reminder when your parking is about to expire`}).execute();
