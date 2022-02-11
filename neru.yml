@@ -1,0 +1,11 @@
+project:
+    name: carpark
+instance:
+    name: dev
+    runtime: nodejs
+    region: aws.euw1
+    application-id: 6e697309-2ed7-43ee-ac75-63f8b26fb78b
+    configurations:
+        contact:
+            number: "447418361819"
+            type: "phone"
