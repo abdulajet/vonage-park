@@ -3,7 +3,6 @@ const router = neru.Router();
 
 const session = neru.createSession();
 const voice = new Voice(session);
-const messaging = new Messages(session);
 
 const contact = JSON.parse(process.env['NERU_CONFIGURATIONS']).contact;
 
@@ -17,8 +16,8 @@ async function chargeCard() {
 
 router.post('/onCall', async (req, res, next) => {
     try {
-        const session = neru.createSession();
-        const voice = new Voice(session);
+        const session = neru.createSession(); 
+        const voice = new Voice(session); 
         const messaging = new Messages(session);
         const state = session.getState();
 
@@ -29,7 +28,8 @@ router.post('/onCall', async (req, res, next) => {
             'onMessage'
         ).execute(); 
         await state.set("calldata", {
-            flowState: 'hour'
+            callUUID: req.body.uuid,
+            flowState: 'parkid'
         });
 
         res.json([
@@ -67,11 +67,10 @@ router.post('/onEvent', async (req, res, next) => {
             const data = await state.get("calldata");
 
             switch (data.flowState) {
-                case 'hour':
-                    await state.set("calldata", {
-                        flowState: 'reg',
-                        parkingID: digits
-                    });
+                case 'parkid':
+                    data.flowState = 'duration';
+                    data.parkingID = digits;
+                    await state.set("calldata", data);
 
                     res.json([
                         {
@@ -90,7 +89,11 @@ router.post('/onEvent', async (req, res, next) => {
                     ]);
                     break;
 
-                case 'reg':            
+
+                case 'duration':
+                    data.flowState = 'reg';
+                    data.duration = digits;
+                    await state.set("calldata", data);
                     await messaging.sendText(
                         vonageNumber,
                         to,
@@ -100,36 +103,17 @@ router.post('/onEvent', async (req, res, next) => {
                     res.json([
                         {
                             action: 'talk',
-                            text: `You will receive a text from this number, reply with your car's registration number. then press any digit.`
+                            text: `You will receive a text from this number, reply with your car's registration number.`
                         },
                         {
                             action: 'stream',
-                            streamUrl: ["https://onhold2go.co.uk/song-demos/free/a-new-life-preview.mp3"],
+                            streamUrl: ["https://onhold2go.co.uk/song-demos/free/a-new-life-preview.mp3"], 
                             loop: "0"
                         }
                     ]);
-
                     break;
 
                 case 'pay':
-                    res.json([
-                        {
-                            action: 'talk',
-                            text: `You are parking for ${digits} hours. Enter your card number followed by a hash to pay.`,
-                            bargeIn: true
-                        },
-                        {
-                            action: 'input',
-                            type: ['dtmf'],
-                            dtmf: {
-                                timeOut: '10',
-                                submitOnHash: true
-                            }
-                        }
-                    ]);
-                    break;
-
-                case 'complete':
                     const scheduler = new Scheduler(session);
 
                     await chargeCard();
@@ -137,25 +121,25 @@ router.post('/onEvent', async (req, res, next) => {
                     await messaging.sendText(
                         vonageNumber,
                         to,
-                        `You are parking at ${data.parkingID} and have paid for ${data.hours} hours.`
+                        `You are parking at ${data.parkingID} and have paid for ${data.duration} hours.`
                     ).execute();
 
-                    const endTime = new Date(new Date().setHours(new Date().getHours() + parseInt(data.hours)));
+                    const endTime = new Date(new Date().setHours(new Date().getHours() + parseInt(data.duration)));
                     const testTime = new Date(new Date().setSeconds(new Date().getSeconds() + 20));
 
-                    scheduler.startAt({
-                        // startAt: new Date(endTime.getTime() - (1000 * 5)).toISOString(),
-                        startAt: testTime.toISOString(),
-                        callback: 'parkingReminder',
-                        payload: {
-                            from: from,
-                        }
-                    }).execute();
+                    // scheduler.startAt({
+                    //     // startAt: new Date(endTime.getTime() - (1000 * 5)).toISOString(),
+                    //     startAt: testTime.toISOString(),
+                    //     callback: 'parkingReminder',
+                    //     payload: {
+                    //         from: from,
+                    //     }
+                    // }).execute();
 
                     res.json([
                         {
                             action: 'talk',
-                            text: `Your card has been charged for ${data.hours} hours. You will receive a text confirmation and a reminder when your parking is about to expire`,
+                            text: `Your card has been charged for ${data.duration} hours. You will receive a text confirmation and a reminder when your parking is about to expire`,
                         }
                     ]);
                     break;
@@ -172,15 +156,36 @@ router.post('/onEvent', async (req, res, next) => {
 router.post('/onMessage', async (req, res, next) => {
     try {
         const session = neru.getSessionFromRequest(req)
-        const state = session.getState();
+        const state = session.getState(); 
         const data = await state.get("calldata");
-        await state.set("calldata", {
-            flowState: 'pay',
-            parkingID: data.parkingID,
-            hours: data.hours,
-            reg: req.body.message.content.text
-        });
 
+        data.flowState = 'pay';
+        data.reg = req.body.message.content.text;
+        await state.set('calldata', data );
+
+        await voice.uploadNCCO(data.callUUID, 
+            {
+                "action": "transfer",
+                "destination": {
+                  "type": "ncco",
+                  "ncco": [
+                    {
+                        action: 'talk',
+                        text: `You've registered the car ${data.reg}. Enter your card number followed by a hash to pay.`,
+                        bargeIn: "true"
+                    },
+                    {
+                        action: 'input',
+                        type: ['dtmf'],
+                        dtmf: {
+                            timeOut: '10',
+                            submitOnHash: "true"
+                        }
+                    }
+                  ]
+                }
+            }
+        ).execute();
         res.status(200);
     } catch (error) {
         next(error);
@@ -204,7 +209,7 @@ router.post('/parkingReminder', async (req, res, next) => {
             to,
             `Your parking at ${data.parkingID} is about to run out.`
         ).execute();
-
+ 
         res.status(200);
     } catch (error) {
         next(error);
